@@ -42,7 +42,7 @@ class TaskListNotifier extends Notifier<TaskListState> {
   }
 
   String get _currentUserId {
-    final user = ref.read(authRepositoryProvider).getCachedUser();
+    final user = ref.read(currentUserProvider);
     return user?.uid ?? 'guest_user';
   }
 

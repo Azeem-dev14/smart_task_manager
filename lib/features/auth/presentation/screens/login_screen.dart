@@ -45,14 +45,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       // Authenticate via Firebase or local fallback
       final user = await authRepo.login(
         email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
+        password: _passwordController.text,
       );
 
-      // Fetch user profile from Firestore (name, email, createdAt, themeMode)
+      // Fetch the profile from Firestore (name, email, createdAt, themeMode) and
+      // cache it, which is what applies the saved theme before the dashboard shows.
       try {
-        await profileRepo.fetchUserProfile(user.uid);
+        final profile = await profileRepo.fetchUserProfile(user.uid, fallback: user);
+        await authRepo.cacheUser(profile);
       } catch (_) {
-        // Fallback to local user model if Firestore is inaccessible
+        // Offline or unreachable Firestore: continue with the authenticated session.
       }
 
       if (mounted) {

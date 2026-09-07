@@ -1,3 +1,5 @@
+import 'dart:developer' as dev;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,8 +8,12 @@ import 'package:smart_task_manager/core/errors/app_exceptions.dart';
 import 'package:smart_task_manager/core/storage/hive_service.dart';
 import 'package:smart_task_manager/features/auth/domain/user_model.dart';
 
-/// Repository managing user profile persistence in Cloud Firestore (`users/{userId}`)
-/// with bidirectional local caching via [HiveService].
+/// Repository managing the user profile document stored in Cloud Firestore at
+/// `users/{userId}` with `name`, `email`, `createdAt` and `themeMode` fields.
+///
+/// Session caching is intentionally delegated to the auth repository so a single
+/// component owns the cached [UserModel]; this repository only persists the
+/// theme preference locally, which the app needs before a profile is loaded.
 class ProfileRepository {
   /// Local key-value storage service.
   final HiveService hiveService;
@@ -18,121 +24,104 @@ class ProfileRepository {
   /// Whether Firebase is available in the current environment.
   bool get isFirebaseAvailable => Firebase.apps.isNotEmpty;
 
-  /// Fetches user profile from Firestore collection `users/{userId}`.
+  CollectionReference<Map<String, dynamic>> get _users =>
+      FirebaseFirestore.instance.collection('users');
+
+  /// Fetches the profile stored at `users/{userId}`.
   ///
-  /// Falls back to local Hive cache if Firestore request fails or is unavailable.
-  Future<UserModel> fetchUserProfile(String userId) async {
+  /// When the document does not exist yet (an account created outside this app,
+  /// or a registration that failed midway) it is created from [fallback].
+  /// If Firestore cannot be reached, the locally cached profile is returned so
+  /// the app stays usable offline.
+  Future<UserModel> fetchUserProfile(String userId, {UserModel? fallback}) async {
     if (isFirebaseAvailable) {
       try {
-        final doc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .get();
-        if (doc.exists && doc.data() != null) {
-          final data = doc.data()!;
-          final user = UserModel(
-            uid: userId,
-            name: data['name']?.toString() ?? '',
-            email: data['email']?.toString() ?? '',
-            createdAt: (data['createdAt'] is Timestamp)
-                ? (data['createdAt'] as Timestamp).toDate()
-                : (data['createdAt'] != null
-                      ? DateTime.tryParse(data['createdAt'].toString()) ??
-                            DateTime.now()
-                      : DateTime.now()),
-            themeMode: data['themeMode']?.toString() ?? 'system',
-          );
+        final doc = await _users.doc(userId).get();
+        final data = doc.data();
 
-          // Update local cache
-          await hiveService.putSetting(
-            AppConstants.keyCachedUser,
-            user.toJson(),
-          );
-          await hiveService.putSetting(
-            AppConstants.keyThemeMode,
-            user.themeMode,
-          );
+        if (doc.exists && data != null) {
+          final user = _fromFirestore(userId, data);
+          await hiveService.putSetting(AppConstants.keyThemeMode, user.themeMode);
           return user;
         }
+
+        if (fallback != null) {
+          await saveUserProfile(fallback);
+          return fallback;
+        }
       } catch (e) {
-        // Fallback to local cache if Firestore fetch fails
+        dev.log('Firestore profile fetch failed, using local cache: $e', name: 'ProfileRepo');
       }
     }
 
-    // Return cached user profile
-    final raw = hiveService.getSetting(AppConstants.keyCachedUser);
-    if (raw is Map) {
-      return UserModel.fromJson(Map<String, dynamic>.from(raw));
-    }
+    final cached = _cachedProfile();
+    if (cached != null) return cached;
+    if (fallback != null) return fallback;
 
-    throw const CacheException('No profile found locally or remotely.');
+    throw const CacheException(
+      'No profile found locally or remotely.',
+      code: 'profile-not-found',
+    );
   }
 
-  /// Saves or creates a user profile document in Firestore and local Hive cache.
+  /// Creates or merges the user profile document and persists the theme locally.
   Future<void> saveUserProfile(UserModel user) async {
-    // 1. Save locally
-    await hiveService.putSetting(AppConstants.keyCachedUser, user.toJson());
     await hiveService.putSetting(AppConstants.keyThemeMode, user.themeMode);
 
-    // 2. Sync to Firestore if available
-    if (isFirebaseAvailable) {
-      try {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'name': user.name,
-          'email': user.email,
-          'createdAt': Timestamp.fromDate(user.createdAt),
-          'themeMode': user.themeMode,
-        }, SetOptions(merge: true));
-      } catch (e) {
-        // Graceful continuation with local save
-      }
+    if (!isFirebaseAvailable) return;
+
+    try {
+      await _users.doc(user.uid).set({
+        'name': user.name,
+        'email': user.email,
+        'createdAt': Timestamp.fromDate(user.createdAt),
+        'themeMode': user.themeMode,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      // The profile stays cached locally and is re-synced on the next write.
+      dev.log('Firestore profile save failed: $e', name: 'ProfileRepo');
     }
   }
 
-  /// Updates preferred theme mode ('system', 'light', 'dark') in Firestore and local storage.
+  /// Persists the preferred theme mode ('system', 'light', 'dark').
+  ///
+  /// Writes locally first so the choice survives a restart even when the device
+  /// is offline, then mirrors it to Firestore.
   Future<void> updateThemeMode({
     required String userId,
     required String themeMode,
   }) async {
     await hiveService.putSetting(AppConstants.keyThemeMode, themeMode);
 
-    final raw = hiveService.getSetting(AppConstants.keyCachedUser);
-    if (raw is Map) {
-      final user = UserModel.fromJson(Map<String, dynamic>.from(raw))
-          .copyWith(themeMode: themeMode);
-      await hiveService.putSetting(AppConstants.keyCachedUser, user.toJson());
-    }
+    if (!isFirebaseAvailable || userId.isEmpty) return;
 
-    if (isFirebaseAvailable && userId.isNotEmpty) {
-      try {
-        await FirebaseFirestore.instance.collection('users').doc(userId).set({
-          'themeMode': themeMode,
-        }, SetOptions(merge: true));
-      } catch (_) {}
+    try {
+      await _users.doc(userId).set({'themeMode': themeMode}, SetOptions(merge: true));
+    } catch (e) {
+      dev.log('Firestore theme sync failed: $e', name: 'ProfileRepo');
     }
   }
 
-  /// Updates user profile display name across Firestore and local storage.
-  Future<UserModel> updateProfileName({
-    required String userId,
-    required String name,
-  }) async {
+  UserModel? _cachedProfile() {
     final raw = hiveService.getSetting(AppConstants.keyCachedUser);
-    UserModel user;
     if (raw is Map) {
-      user = UserModel.fromJson(Map<String, dynamic>.from(raw))
-          .copyWith(name: name);
-    } else {
-      user = UserModel(
-        uid: userId,
-        name: name,
-        email: '',
-        createdAt: DateTime.now(),
-      );
+      return UserModel.fromJson(Map<String, dynamic>.from(raw));
     }
+    return null;
+  }
 
-    await saveUserProfile(user);
-    return user;
+  UserModel _fromFirestore(String userId, Map<String, dynamic> data) {
+    final createdAt = data['createdAt'];
+
+    return UserModel(
+      uid: userId,
+      name: data['name']?.toString() ?? '',
+      email: data['email']?.toString() ?? '',
+      createdAt: createdAt is Timestamp
+          ? createdAt.toDate()
+          : DateTime.tryParse(createdAt?.toString() ?? '') ?? DateTime.now(),
+      themeMode: data['themeMode']?.toString() ?? 'system',
+    );
   }
 }
 

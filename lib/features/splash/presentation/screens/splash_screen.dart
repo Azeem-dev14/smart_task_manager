@@ -6,7 +6,7 @@ import 'package:smart_task_manager/features/auth/presentation/screens/login_scre
 import 'package:smart_task_manager/features/profile/data/profile_repository.dart';
 import 'package:smart_task_manager/features/tasks/presentation/screens/task_list_screen.dart';
 
-/// Initial entry screen responsible for checking user session and routing accordingly.
+/// Initial entry screen responsible for restoring the session and routing accordingly.
 class SplashScreen extends ConsumerStatefulWidget {
   /// Constructs the [SplashScreen].
   const SplashScreen({super.key});
@@ -19,39 +19,38 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    _checkAuth();
+    _restoreSession();
   }
 
-  /// Verifies if a user session is cached in local Hive storage.
+  /// Restores a persistent login session.
   ///
-  /// If valid, pre-fetches the user profile from Firestore and routes to [TaskListScreen].
-  /// Otherwise, redirects to [LoginScreen].
-  Future<void> _checkAuth() async {
-    await Future.delayed(const Duration(milliseconds: 600));
+  /// Firebase is authoritative for whether the session is still valid; when one
+  /// exists the Firestore profile is loaded (so the saved theme applies before
+  /// the dashboard appears) and the user goes straight to the task list.
+  Future<void> _restoreSession() async {
+    final authRepository = ref.read(authRepositoryProvider);
+
+    final user = await authRepository.restoreSession();
+
+    if (user != null) {
+      try {
+        final profile = await ref
+            .read(profileRepositoryProvider)
+            .fetchUserProfile(user.uid, fallback: user);
+        await authRepository.cacheUser(profile);
+      } catch (_) {
+        // Offline or no profile document yet: continue with the cached session.
+      }
+    }
+
     if (!mounted) return;
 
-    final cachedUser = ref.read(authRepositoryProvider).getCachedUser();
-
-    if (cachedUser != null && cachedUser.uid.isNotEmpty) {
-      // Pre-fetch updated user profile from Firestore in background if online
-      try {
-        await ref
-            .read(profileRepositoryProvider)
-            .fetchUserProfile(cachedUser.uid);
-      } catch (_) {
-        // Safe fallback to locally cached profile
-      }
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const TaskListScreen()),
-      );
-    } else {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-      );
-    }
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => user != null ? const TaskListScreen() : const LoginScreen(),
+      ),
+    );
   }
 
   @override

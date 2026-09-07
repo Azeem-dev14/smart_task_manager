@@ -52,7 +52,7 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
     final state = ref.watch(taskListControllerProvider);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final user = ref.watch(authRepositoryProvider).getCachedUser();
+    final user = ref.watch(currentUserProvider);
     final visibleTasks = state.visibleTasks;
 
     return Scaffold(

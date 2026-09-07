@@ -25,8 +25,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   @override
   void initState() {
     super.initState();
-    final user = ref.read(authRepositoryProvider).getCachedUser();
-    _nameController.text = user?.name ?? '';
+    _nameController.text = ref.read(currentUserProvider)?.name ?? '';
   }
 
   @override
@@ -40,22 +39,23 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final newName = _nameController.text.trim();
     if (newName.isEmpty) return;
 
+    final user = ref.read(currentUserProvider);
+    if (user == null || newName == user.name) {
+      setState(() => _isEditingName = false);
+      return;
+    }
+
     setState(() => _isSaving = true);
     try {
-      final user = ref.read(authRepositoryProvider).getCachedUser();
-      if (user != null) {
-        final profileRepo = ref.read(profileRepositoryProvider);
-        final updated = await profileRepo.updateProfileName(
-          userId: user.uid,
-          name: newName,
-        );
-        await ref.read(authRepositoryProvider).cacheUser(updated);
+      final updated = user.copyWith(name: newName);
+      await ref.read(profileRepositoryProvider).saveUserProfile(updated);
+      await ref.read(authRepositoryProvider).cacheUser(updated);
+
+      if (mounted) {
         setState(() => _isEditingName = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Profile updated successfully!')),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profile updated successfully!')),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -78,22 +78,28 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       isDestructive: true,
     );
 
-    if (confirmed) {
+    if (!confirmed) return;
+
+    try {
       await ref.read(authRepositoryProvider).logout();
-      if (mounted) {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
-        );
-      }
+    } catch (e) {
+      if (mounted) ErrorView.showSnackBar(context, e);
+      return;
+    }
+
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final user = ref.watch(authRepositoryProvider).getCachedUser();
+    final user = ref.watch(currentUserProvider);
     final themeMode = ref.watch(themeControllerProvider);
 
     return Scaffold(
@@ -217,6 +223,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         title: const Text('User ID (API query param)'),
                         subtitle: Text(
                           user?.uid ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
                         ),
                       ),

@@ -8,22 +8,20 @@ import 'package:smart_task_manager/core/database/app_database.dart';
 import 'package:smart_task_manager/core/network/api_client.dart';
 import 'package:smart_task_manager/core/storage/hive_service.dart';
 import 'package:smart_task_manager/features/auth/data/auth_repository.dart';
-
 import 'package:smart_task_manager/firebase_options.dart';
 
 /// Main application entry point.
 ///
-/// Initializes Flutter bindings, handles Firebase startup with a graceful fallback,
-/// initializes local Hive key-value storage, sets up the Drift SQLite database,
-/// and launches the root widget inside a [ProviderScope].
+/// Initializes Flutter bindings, starts Firebase (falling back to a local-only
+/// mode if it is unavailable), opens local storage, and launches the root widget
+/// inside a [ProviderScope] with the runtime dependencies injected.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Initialize Firebase (graceful catch if credentials not yet configured)
+  // 1. Firebase — a failure here must not brick the app; auth and profile both
+  //    degrade to a local-only mode when Firebase is not configured.
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
     dev.log('Firebase initialized successfully', name: 'AppInit');
   } catch (e) {
     dev.log(
@@ -32,25 +30,25 @@ Future<void> main() async {
     );
   }
 
-  // 2. Initialize Hive local key-value storage (for user profile & app settings)
+  // 2. Hive — session cache and theme preference.
   final hiveService = HiveService();
   await hiveService.init();
 
-  // 3. Initialize Drift SQLite database (single source of truth for offline-first tasks)
-  final appDb = AppDatabase();
+  // 3. Drift SQLite — single source of truth for the offline-first task cache.
+  final appDatabase = AppDatabase();
 
-  // 4. Run application wrapped in Riverpod ProviderScope with dependency overrides
   runApp(
     ProviderScope(
       overrides: [
         hiveServiceProvider.overrideWithValue(hiveService),
-        appDatabaseProvider.overrideWithValue(appDb),
-        apiClientProvider.overrideWith((ref) {
-          return ApiClient(
-            getUserId: () =>
-                ref.read(authRepositoryProvider).getCachedUser()?.uid,
-          );
-        }),
+        appDatabaseProvider.overrideWithValue(appDatabase),
+        // The API client injects `user_id` on every request; it reads the UID
+        // lazily so it always reflects the currently signed-in account.
+        apiClientProvider.overrideWith(
+          (ref) => ApiClient(
+            getUserId: () => ref.read(authRepositoryProvider).currentUser?.uid,
+          ),
+        ),
       ],
       child: const SmartTaskManagerApp(),
     ),
