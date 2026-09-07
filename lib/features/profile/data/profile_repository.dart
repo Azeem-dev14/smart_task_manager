@@ -24,7 +24,10 @@ class ProfileRepository {
   Future<UserModel> fetchUserProfile(String userId) async {
     if (isFirebaseAvailable) {
       try {
-        final doc = await FirebaseFirestore.instance.collection('users').doc(userId).get();
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .get();
         if (doc.exists && doc.data() != null) {
           final data = doc.data()!;
           final user = UserModel(
@@ -34,14 +37,21 @@ class ProfileRepository {
             createdAt: (data['createdAt'] is Timestamp)
                 ? (data['createdAt'] as Timestamp).toDate()
                 : (data['createdAt'] != null
-                    ? DateTime.tryParse(data['createdAt'].toString()) ?? DateTime.now()
-                    : DateTime.now()),
+                      ? DateTime.tryParse(data['createdAt'].toString()) ??
+                            DateTime.now()
+                      : DateTime.now()),
             themeMode: data['themeMode']?.toString() ?? 'system',
           );
 
           // Update local cache
-          await hiveService.putSetting(AppConstants.keyCachedUser, user.toJson());
-          await hiveService.putSetting(AppConstants.keyThemeMode, user.themeMode);
+          await hiveService.putSetting(
+            AppConstants.keyCachedUser,
+            user.toJson(),
+          );
+          await hiveService.putSetting(
+            AppConstants.keyThemeMode,
+            user.themeMode,
+          );
           return user;
         }
       } catch (e) {
@@ -80,12 +90,16 @@ class ProfileRepository {
   }
 
   /// Updates preferred theme mode ('system', 'light', 'dark') in Firestore and local storage.
-  Future<void> updateThemeMode({required String userId, required String themeMode}) async {
+  Future<void> updateThemeMode({
+    required String userId,
+    required String themeMode,
+  }) async {
     await hiveService.putSetting(AppConstants.keyThemeMode, themeMode);
 
     final raw = hiveService.getSetting(AppConstants.keyCachedUser);
     if (raw is Map) {
-      final user = UserModel.fromJson(Map<String, dynamic>.from(raw)).copyWith(themeMode: themeMode);
+      final user = UserModel.fromJson(Map<String, dynamic>.from(raw))
+          .copyWith(themeMode: themeMode);
       await hiveService.putSetting(AppConstants.keyCachedUser, user.toJson());
     }
 
@@ -99,13 +113,22 @@ class ProfileRepository {
   }
 
   /// Updates user profile display name across Firestore and local storage.
-  Future<UserModel> updateProfileName({required String userId, required String name}) async {
+  Future<UserModel> updateProfileName({
+    required String userId,
+    required String name,
+  }) async {
     final raw = hiveService.getSetting(AppConstants.keyCachedUser);
     UserModel user;
     if (raw is Map) {
-      user = UserModel.fromJson(Map<String, dynamic>.from(raw)).copyWith(name: name);
+      user = UserModel.fromJson(Map<String, dynamic>.from(raw))
+          .copyWith(name: name);
     } else {
-      user = UserModel(uid: userId, name: name, email: '', createdAt: DateTime.now());
+      user = UserModel(
+        uid: userId,
+        name: name,
+        email: '',
+        createdAt: DateTime.now(),
+      );
     }
 
     await saveUserProfile(user);

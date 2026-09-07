@@ -1,4 +1,5 @@
 import 'dart:developer' as dev;
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,8 @@ import 'package:smart_task_manager/core/database/app_database.dart';
 import 'package:smart_task_manager/core/network/api_client.dart';
 import 'package:smart_task_manager/core/storage/hive_service.dart';
 import 'package:smart_task_manager/features/auth/data/auth_repository.dart';
+
+import 'package:smart_task_manager/firebase_options.dart';
 
 /// Main application entry point.
 ///
@@ -18,7 +21,9 @@ Future<void> main() async {
 
   // 1. Initialize Firebase (graceful catch if credentials not yet configured)
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
     dev.log('Firebase initialized successfully', name: 'AppInit');
   } catch (e) {
     dev.log(
@@ -42,7 +47,8 @@ Future<void> main() async {
         appDatabaseProvider.overrideWithValue(appDb),
         apiClientProvider.overrideWith((ref) {
           return ApiClient(
-            getUserId: () => ref.read(authRepositoryProvider).getCachedUser()?.uid,
+            getUserId: () =>
+                ref.read(authRepositoryProvider).getCachedUser()?.uid,
           );
         }),
       ],

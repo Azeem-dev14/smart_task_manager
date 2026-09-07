@@ -35,7 +35,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     if (cachedUser != null && cachedUser.uid.isNotEmpty) {
       // Pre-fetch updated user profile from Firestore in background if online
       try {
-        await ref.read(profileRepositoryProvider).fetchUserProfile(cachedUser.uid);
+        await ref
+            .read(profileRepositoryProvider)
+            .fetchUserProfile(cachedUser.uid);
       } catch (_) {
         // Safe fallback to locally cached profile
       }
@@ -59,10 +61,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            AppLogo(
-              size: 64,
-              subtitle: 'Organize, track, and conquer tasks',
-            ),
+            AppLogo(size: 64, subtitle: 'Organize, track, and conquer tasks'),
             SizedBox(height: 36),
             SizedBox(
               width: 24,

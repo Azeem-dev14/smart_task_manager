@@ -1,0 +1,30 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "smart-task-manager-4921",
+          "appId": "1:465837483142:android:27e490f85e59e92bf7dd07",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "smart-task-manager-4921",
+          "appId": "1:465837483142:ios:babf5961230de546f7dd07",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "smart-task-manager-4921",
+          "configurations": {
+            "android": "1:465837483142:android:27e490f85e59e92bf7dd07",
+            "ios": "1:465837483142:ios:babf5961230de546f7dd07"
+          }
+        }
+      }
+    }
+  }
+}
