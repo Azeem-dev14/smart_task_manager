@@ -68,6 +68,8 @@ class TaskCard extends ConsumerWidget {
                         Expanded(
                           child: Text(
                             task.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: context.titleMedium?.copyWith(
                               fontWeight: FontWeight.w600,
                               decoration: task.isCompleted

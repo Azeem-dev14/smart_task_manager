@@ -17,57 +17,19 @@ import 'package:smart_task_manager/features/tasks/presentation/screens/task_sear
 
 /// Primary dashboard screen displaying the task list with debounced search,
 /// status filtering, sorting, pull-to-refresh, and infinite scroll pagination.
-class TaskListScreen extends ConsumerStatefulWidget {
+///
+/// Only [currentUserProvider] is watched here, so the app bar and floating
+/// action button are unaffected by the far more frequent [TaskListState]
+/// updates (a background sync tick, a page loading, a filter change) — those
+/// are scoped entirely to [_TaskListBody] below.
+class TaskListScreen extends ConsumerWidget {
   /// Constructs a [TaskListScreen].
   const TaskListScreen({super.key});
 
   @override
-  ConsumerState<TaskListScreen> createState() => _TaskListScreenState();
-}
-
-class _TaskListScreenState extends ConsumerState<TaskListScreen> {
-  final _scrollController = ScrollController();
-
-  @override
-  void initState() {
-    super.initState();
-    _scrollController.addListener(_onScroll);
-  }
-
-  @override
-  void dispose() {
-    _scrollController.removeListener(_onScroll);
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  /// Infinite scroll: request the next page once the viewport nears the bottom.
-  void _onScroll() {
-    if (!_scrollController.hasClients) return;
-
-    final position = _scrollController.position;
-    if (position.pixels >= position.maxScrollExtent - 200) {
-      ref.read(taskListControllerProvider.notifier).loadMoreTasks();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final state = ref.watch(taskListControllerProvider);
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final user = ref.watch(currentUserProvider);
-    final visibleTasks = state.visibleTasks;
-
-    // Sync problems that happen while tasks are already on screen are reported
-    // without taking the list away from the user.
-    ref.listen<TaskListState>(taskListControllerProvider, (previous, next) {
-      final error = next.error;
-      if (error == null || error == previous?.error) return;
-      if (next.allTasks.isEmpty) return;
-
-      ErrorView.showSnackBar(context, error);
-      ref.read(taskListControllerProvider.notifier).clearError();
-    });
 
     return Scaffold(
       appBar: AppBar(
@@ -101,95 +63,7 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
           const SizedBox(width: 4),
         ],
       ),
-      body: Column(
-        children: [
-          const OfflineBanner(),
-
-          // Search bar — tapping opens the dedicated search page (SearchDelegate).
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: Material(
-              color: theme.inputDecorationTheme.fillColor,
-              borderRadius: BorderRadius.circular(24),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(24),
-                onTap: () => showSearch(context: context, delegate: TaskSearchDelegate()),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.search,
-                        size: 20,
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Search tasks by title...',
-                        style: context.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // Sort menu and status filter chips.
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  PopupMenuButton<TaskSortBy>(
-                    tooltip: 'Sort tasks',
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    onSelected: ref.read(taskListControllerProvider.notifier).setSortBy,
-                    itemBuilder: (_) => [
-                      _sortMenuItem(TaskSortBy.createdDate, 'Sort by created date', state.sortBy),
-                      _sortMenuItem(TaskSortBy.dueDate, 'Sort by due date', state.sortBy),
-                      _sortMenuItem(TaskSortBy.priority, 'Sort by priority', state.sortBy),
-                    ],
-                    child: Chip(
-                      avatar: const Icon(Icons.sort_rounded, size: 18),
-                      label: const Text('Sort'),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _filterChip('All', TaskFilter.all, state.filter),
-                  const SizedBox(width: 8),
-                  _filterChip('Pending', TaskFilter.pending, state.filter),
-                  const SizedBox(width: 8),
-                  _filterChip('Completed', TaskFilter.completed, state.filter),
-                ],
-              ),
-            ),
-          ),
-
-          const Divider(height: 12),
-
-          // Task count for the currently visible (filtered/searched) list.
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Tasks - ${visibleTasks.length}',
-                style: context.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
-                ),
-              ),
-            ),
-          ),
-
-          Expanded(child: _buildBody(state, visibleTasks)),
-        ],
-      ),
+      body: const _TaskListBody(),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => TaskFormScreen.show(context),
         icon: const Icon(Icons.add),
@@ -197,8 +71,152 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
       ),
     );
   }
+}
 
-  Widget _buildBody(TaskListState state, List<TaskModel> visibleTasks) {
+/// The task-state-dependent portion of the dashboard: offline banner, search
+/// bar, sort/filter row, task count, and the list itself.
+class _TaskListBody extends ConsumerStatefulWidget {
+  const _TaskListBody();
+
+  @override
+  ConsumerState<_TaskListBody> createState() => _TaskListBodyState();
+}
+
+class _TaskListBodyState extends ConsumerState<_TaskListBody> {
+  final _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  /// Infinite scroll: request the next page once the viewport nears the bottom.
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+
+    final position = _scrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 200) {
+      ref.read(taskListControllerProvider.notifier).loadMoreTasks();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(taskListControllerProvider);
+    final theme = Theme.of(context);
+    final visibleTasks = state.visibleTasks;
+
+    // Sync problems that happen while tasks are already on screen are reported
+    // without taking the list away from the user.
+    ref.listen<TaskListState>(taskListControllerProvider, (previous, next) {
+      final error = next.error;
+      if (error == null || error == previous?.error) return;
+      if (next.allTasks.isEmpty) return;
+
+      ErrorView.showSnackBar(context, error);
+      ref.read(taskListControllerProvider.notifier).clearError();
+    });
+
+    return Column(
+      children: [
+        const OfflineBanner(),
+
+        // Search bar — tapping opens the dedicated search page (SearchDelegate).
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: Material(
+            color: theme.inputDecorationTheme.fillColor,
+            borderRadius: BorderRadius.circular(24),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(24),
+              onTap: () => showSearch(context: context, delegate: TaskSearchDelegate()),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.search,
+                      size: 20,
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Search tasks by title...',
+                      style: context.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        // Sort menu and status filter chips.
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                PopupMenuButton<TaskSortBy>(
+                  tooltip: 'Sort tasks',
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  onSelected: ref.read(taskListControllerProvider.notifier).setSortBy,
+                  itemBuilder: (_) => [
+                    _sortMenuItem(context, TaskSortBy.createdDate, 'Sort by created date', state.sortBy),
+                    _sortMenuItem(context, TaskSortBy.dueDate, 'Sort by due date', state.sortBy),
+                    _sortMenuItem(context, TaskSortBy.priority, 'Sort by priority', state.sortBy),
+                  ],
+                  child: Chip(
+                    avatar: const Icon(Icons.sort_rounded, size: 18),
+                    label: const Text('Sort'),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _filterChip('All', TaskFilter.all, state.filter),
+                const SizedBox(width: 8),
+                _filterChip('Pending', TaskFilter.pending, state.filter),
+                const SizedBox(width: 8),
+                _filterChip('Completed', TaskFilter.completed, state.filter),
+              ],
+            ),
+          ),
+        ),
+
+        const Divider(height: 12),
+
+        // Task count for the currently visible (filtered/searched) list.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Tasks - ${visibleTasks.length}',
+              style: context.titleSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
+          ),
+        ),
+
+        Expanded(child: _buildListArea(state, visibleTasks)),
+      ],
+    );
+  }
+
+  Widget _buildListArea(TaskListState state, List<TaskModel> visibleTasks) {
     if (state.isLoading && state.allTasks.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -266,7 +284,12 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
     );
   }
 
-  PopupMenuItem<TaskSortBy> _sortMenuItem(TaskSortBy value, String label, TaskSortBy current) {
+  PopupMenuItem<TaskSortBy> _sortMenuItem(
+    BuildContext context,
+    TaskSortBy value,
+    String label,
+    TaskSortBy current,
+  ) {
     final isSelected = current == value;
 
     return PopupMenuItem(

@@ -1,5 +1,5 @@
 name: smart_task_manager
-description: "A new Flutter project."
+description: "An offline-first task manager with Firebase auth, Firestore profiles, and a Riverpod-driven REST task module."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
