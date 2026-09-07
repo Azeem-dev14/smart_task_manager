@@ -7,20 +7,37 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// Uses [Connectivity] to listen to hardware network state changes and broadcasts
 /// boolean online/offline events across the application.
 class ConnectivityService {
-  final Connectivity _connectivity = Connectivity();
+  final Connectivity _connectivity;
   final _controller = StreamController<bool>.broadcast();
+  StreamSubscription<List<ConnectivityResult>>? _subscription;
+
+  /// Last observed connectivity state, kept so callers can make a synchronous
+  /// decision without paying for a platform channel round trip every time.
+  bool _lastKnownOnline = true;
 
   /// Constructs the [ConnectivityService] and starts listening to connectivity changes.
-  ConnectivityService() {
+  ConnectivityService({Connectivity? connectivity})
+      : _connectivity = connectivity ?? Connectivity() {
     _init();
   }
 
-  /// Broadcast stream emitting `true` when network connectivity is present and `false` when offline.
-  Stream<bool> get isOnlineStream => _controller.stream;
+  /// Most recently observed connectivity state.
+  bool get lastKnownOnline => _lastKnownOnline;
+
+  /// Broadcast stream emitting `true` when connectivity is present, `false` when offline.
+  ///
+  /// The stream replays the current state to every new subscriber before
+  /// forwarding live transitions, so a listener attaching after startup (the
+  /// offline banner, for instance) immediately renders the correct state.
+  Stream<bool> get isOnlineStream async* {
+    yield await checkConnection();
+    yield* _controller.stream;
+  }
 
   void _init() {
-    _connectivity.onConnectivityChanged.listen((results) {
-      _controller.add(_isOnline(results));
+    _subscription = _connectivity.onConnectivityChanged.listen((results) {
+      _lastKnownOnline = _isOnline(results);
+      _controller.add(_lastKnownOnline);
     });
   }
 
@@ -34,14 +51,17 @@ class ConnectivityService {
   Future<bool> checkConnection() async {
     try {
       final results = await _connectivity.checkConnectivity();
-      return _isOnline(results);
+      _lastKnownOnline = _isOnline(results);
     } catch (_) {
-      return false;
+      // Platform channel unavailable (e.g. in tests): fall back to the last
+      // value rather than falsely reporting the device as offline.
     }
+    return _lastKnownOnline;
   }
 
   /// Closes the internal broadcast stream controller.
   void dispose() {
+    _subscription?.cancel();
     _controller.close();
   }
 }
@@ -56,5 +76,5 @@ final connectivityServiceProvider = Provider<ConnectivityService>((ref) {
 /// Reactive stream provider emitting whether the device is currently online.
 final isOnlineProvider = StreamProvider<bool>((ref) {
   final service = ref.watch(connectivityServiceProvider);
-  return service.isOnlineStream;
+  return service.isOnlineStream.distinct();
 });

@@ -28,12 +28,17 @@ class OfflineBanner extends ConsumerWidget {
               children: [
                 Icon(Icons.wifi_off, color: Colors.white, size: 18),
                 SizedBox(width: 8),
-                Text(
-                  'Offline Mode — changes will sync when connected',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                // Flexible keeps the banner from overflowing on narrow screens
+                // and at large text scales.
+                Flexible(
+                  child: Text(
+                    'Offline — changes sync when you reconnect',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
