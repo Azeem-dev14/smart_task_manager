@@ -21,21 +21,25 @@ class ApiClient {
   final CurrentUserIdGetter? getUserId;
 
   /// Constructs an [ApiClient] and configures base options and interceptors.
-  ApiClient({this.getUserId}) {
-    dio = Dio(
-      BaseOptions(
-        baseUrl: AppConstants.apiBaseUrl,
-        connectTimeout: const Duration(milliseconds: AppConstants.apiConnectTimeoutMs),
-        receiveTimeout: const Duration(milliseconds: AppConstants.apiReceiveTimeoutMs),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-      ),
-    );
+  ApiClient({this.getUserId, Dio? dioOverride}) {
+    dio = dioOverride ??
+        Dio(
+          BaseOptions(
+            baseUrl: AppConstants.apiBaseUrl,
+            connectTimeout: const Duration(milliseconds: AppConstants.apiConnectTimeoutMs),
+            receiveTimeout: const Duration(milliseconds: AppConstants.apiReceiveTimeoutMs),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+          ),
+        );
 
     dio.interceptors.addAll([
-      // Interceptor 1: Automatic user_id query parameter injection & error mapping
+      // Interceptor 1: Automatic user_id query parameter injection.
+      //
+      // Every endpoint of the backend requires `user_id`, so callers never have
+      // to remember it; an explicitly supplied value always wins.
       InterceptorsWrapper(
         onRequest: (options, handler) {
           if (!options.queryParameters.containsKey('user_id')) {
@@ -46,20 +50,9 @@ class ApiClient {
           }
           handler.next(options);
         },
-        onError: (DioException e, handler) {
-          final mappedException = _mapDioException(e);
-          handler.next(
-            DioException(
-              requestOptions: e.requestOptions,
-              response: e.response,
-              type: e.type,
-              error: mappedException,
-              message: mappedException.message,
-            ),
-          );
-        },
       ),
-      // Interceptor 2: Debug logging
+
+      // Interceptor 2: Debug logging of requests, responses and failures.
       InterceptorsWrapper(
         onRequest: (options, handler) {
           dev.log('--> ${options.method} ${options.uri}', name: 'API');
@@ -73,64 +66,119 @@ class ApiClient {
           handler.next(response);
         },
         onError: (DioException e, handler) {
-          dev.log('<-- ERROR ${e.response?.statusCode} ${e.requestOptions.uri}: ${e.message}', name: 'API');
+          dev.log(
+            '<-- ERROR ${e.response?.statusCode} ${e.requestOptions.uri}: ${e.message}',
+            name: 'API',
+          );
           handler.next(e);
+        },
+      ),
+
+      // Interceptor 3: Error translation.
+      //
+      // Rejects with the domain [AppException] attached, so every caller can
+      // recover a typed failure through [ApiClient.toAppException] instead of
+      // reasoning about transport-level [DioException]s.
+      InterceptorsWrapper(
+        onError: (DioException e, handler) {
+          handler.reject(
+            DioException(
+              requestOptions: e.requestOptions,
+              response: e.response,
+              type: e.type,
+              error: mapDioException(e),
+              message: e.message,
+            ),
+          );
         },
       ),
     ]);
   }
 
+  /// Converts any thrown [error] into the domain [AppException] hierarchy.
+  ///
+  /// Unwraps the exception attached by the error interceptor, falling back to a
+  /// fresh mapping (or [UnknownException]) so callers never leak transport types.
+  static AppException toAppException(Object error) {
+    if (error is AppException) return error;
+
+    if (error is DioException) {
+      final attached = error.error;
+      if (attached is AppException) return attached;
+      return mapDioException(error);
+    }
+
+    return UnknownException(error.toString(), 'unknown', error);
+  }
+
   /// Maps a raw [DioException] into the domain [AppException] hierarchy.
-  static AppException _mapDioException(DioException e) {
+  static AppException mapDioException(DioException e) {
     switch (e.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
+      case DioExceptionType.transformTimeout:
+        return NetworkException(
+          'The server is taking too long to respond. Please try again.',
+          'network-timeout',
+          e,
+        );
+
       case DioExceptionType.connectionError:
         return NetworkException(
-          'Network connection timeout. Please check your internet connection.',
-          'network-timeout',
+          'Unable to reach the server. Please check your internet connection.',
+          'network-unreachable',
           e,
         );
 
       case DioExceptionType.badResponse:
         final status = e.response?.statusCode;
-        final data = e.response?.data;
-        String message = 'Server error occurred ($status)';
-
-        if (data is Map) {
-          if (data.containsKey('detail')) {
-            final detail = data['detail'];
-            if (detail is String) {
-              message = detail;
-            } else if (detail is List && detail.isNotEmpty) {
-              final first = detail.first;
-              if (first is Map && first.containsKey('msg')) {
-                message = first['msg'].toString();
-              } else {
-                message = detail.toString();
-              }
-            }
-          } else if (data.containsKey('message')) {
-            message = data['message'].toString();
-          }
-        }
-        return ServerException(message, statusCode: status, originalError: e);
+        return ServerException(
+          _messageFromResponse(e.response?.data, status),
+          statusCode: status,
+          code: 'server-$status',
+          originalError: e,
+        );
 
       case DioExceptionType.cancel:
         return const NetworkException('Request was cancelled.', 'request-cancelled');
 
       case DioExceptionType.badCertificate:
-        return const NetworkException('Security certificate verification failed.', 'bad-certificate');
+        return const NetworkException(
+          'Security certificate verification failed.',
+          'bad-certificate',
+        );
 
       case DioExceptionType.unknown:
-      default:
         return NetworkException(
           e.message ?? 'An unexpected network error occurred.',
           'network-unknown',
           e,
         );
     }
+  }
+
+  /// Extracts a human readable message from a FastAPI error payload.
+  ///
+  /// Handles both the plain `{"detail": "..."}` shape and the validation error
+  /// shape `{"detail": [{"loc": [...], "msg": "..."}]}`.
+  static String _messageFromResponse(dynamic data, int? status) {
+    if (data is Map) {
+      final detail = data['detail'];
+      if (detail is String && detail.isNotEmpty) return detail;
+      if (detail is List && detail.isNotEmpty) {
+        final first = detail.first;
+        if (first is Map && first['msg'] != null) return first['msg'].toString();
+        return detail.first.toString();
+      }
+      final message = data['message'];
+      if (message is String && message.isNotEmpty) return message;
+    }
+
+    if (status != null && status >= 500) {
+      return 'The server encountered an error ($status). Please try again later.';
+    }
+    return 'Request failed${status != null ? ' ($status)' : ''}. Please try again.';
   }
 }
 
