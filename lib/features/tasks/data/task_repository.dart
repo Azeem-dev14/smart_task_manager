@@ -1,14 +1,41 @@
 import 'dart:developer' as dev;
+
+import 'package:dio/dio.dart';
 import 'package:drift/drift.dart' as drift;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:smart_task_manager/core/constants/app_constants.dart';
 import 'package:smart_task_manager/core/database/app_database.dart';
+import 'package:smart_task_manager/core/errors/app_exceptions.dart';
 import 'package:smart_task_manager/core/network/api_client.dart';
 import 'package:smart_task_manager/core/network/connectivity_service.dart';
 import 'package:smart_task_manager/features/tasks/domain/models/task_model.dart';
 
+/// Outcome of pulling one or more pages of tasks from the backend.
+class TaskPageResult {
+  /// Number of task records returned by the backend.
+  final int fetched;
+
+  /// Total number of tasks the backend holds for this user.
+  final int total;
+
+  /// Server identifiers contained in the fetched range.
+  final Set<int> serverIds;
+
+  /// Creates a [TaskPageResult].
+  const TaskPageResult({
+    required this.fetched,
+    required this.total,
+    this.serverIds = const {},
+  });
+}
+
 /// Repository managing task persistence, reactive streams, optimistic local mutations,
 /// and bidirectional synchronization between Drift SQLite and the remote FastAPI backend.
+///
+/// Every mutation is written to SQLite first and tagged with a [SyncStatus], so the
+/// UI updates instantly and the change survives being made while offline. Remote
+/// calls then reconcile the record. Failures are translated into the [AppException]
+/// hierarchy so the presentation layer can react to the *kind* of failure.
 class TaskRepository {
   /// REST API client for backend communication.
   final ApiClient apiClient;
@@ -19,6 +46,9 @@ class TaskRepository {
   /// Network connectivity service for real-time online status checks.
   final ConnectivityService connectivityService;
 
+  /// Safety valve so a misbehaving backend can never spin the refresh loop forever.
+  static const int _maxPagesPerRefresh = 50;
+
   /// Constructs a [TaskRepository].
   TaskRepository({
     required this.apiClient,
@@ -26,7 +56,7 @@ class TaskRepository {
     required this.connectivityService,
   });
 
-  /// Single Source of Truth: Emits real-time reactive updates of active tasks from Drift SQLite.
+  /// Single Source of Truth: emits real-time updates of active tasks from Drift SQLite.
   Stream<List<TaskModel>> watchTasks(String userId) {
     return db.watchActiveTasks(userId).map(
           (entries) => entries.map((e) => e.toModel()).toList(),
@@ -39,11 +69,16 @@ class TaskRepository {
     return entries.map((e) => e.toModel()).toList();
   }
 
-  /// Offline-First task creation.
+  // ---------------------------------------------------------------------------
+  // Mutations (offline-first, optimistic)
+  // ---------------------------------------------------------------------------
+
+  /// Creates a task locally, then pushes it to the backend when connected.
   ///
-  /// Optimistically writes into Drift SQLite with [SyncStatus.pendingCreate] (or [SyncStatus.synced]
-  /// if online), followed by immediate remote API sync if connectivity is present.
-  Future<TaskModel> executeCreateTask({
+  /// The row is inserted as [SyncStatus.pendingCreate] and only promoted to
+  /// synced once the backend has acknowledged it, so a failed request can never
+  /// leave behind a row that claims to exist remotely.
+  Future<void> createTask({
     required String userId,
     required String title,
     String? description,
@@ -52,9 +87,7 @@ class TaskRepository {
     DateTime? dueDate,
   }) async {
     final now = DateTime.now();
-    final isOnline = await connectivityService.checkConnection();
 
-    // 1. Optimistic write into Drift local database immediately
     final localId = await db.executeCreateTask(
       TasksTableCompanion.insert(
         userId: userId,
@@ -66,74 +99,28 @@ class TaskRepository {
         category: drift.Value(category.value),
         createdAt: now,
         updatedAt: now,
-        syncStatus: drift.Value(isOnline ? SyncStatus.synced : SyncStatus.pendingCreate),
+        syncStatus: const drift.Value(SyncStatus.pendingCreate),
       ),
     );
 
-    var createdModel = TaskModel(
-      id: localId,
-      localId: localId,
-      userId: userId,
-      title: title,
-      description: description,
-      isCompleted: false,
-      dueDate: dueDate,
-      priority: priority,
-      category: category,
-      createdAt: now,
-      updatedAt: now,
-      isPendingSync: !isOnline,
-      syncStatus: isOnline ? SyncStatus.synced : SyncStatus.pendingCreate,
-    );
+    if (!await connectivityService.checkConnection()) return;
 
-    // 2. If online, sync to backend immediately
-    if (isOnline) {
-      try {
-        final response = await apiClient.dio.post(
-          '/tasks/',
-          queryParameters: {'user_id': userId},
-          data: createdModel.toApiCreateJson(),
-        );
+    final entry = await db.findByLocalId(localId);
+    if (entry == null) return;
 
-        final rawData = response.data['data'] as Map<String, dynamic>;
-        final serverId = rawData['id'] as int;
-        final serverUpdatedAt = DateTime.tryParse(rawData['updated_at']?.toString() ?? '') ?? now;
-
-        await db.markTaskSynced(
-          localId: localId,
-          serverId: serverId,
-          updatedAt: serverUpdatedAt,
-        );
-
-        createdModel = createdModel.copyWith(
-          id: serverId,
-          isPendingSync: false,
-          syncStatus: SyncStatus.synced,
-          lastSyncedAt: DateTime.now(),
-        );
-      } catch (e) {
-        dev.log('Create API failed; marked as pending sync in Drift: $e', name: 'TaskRepo');
-        final entry = (await db.getActiveTasks(userId)).firstWhere((e) => e.id == localId);
-        await db.executeUpdateTask(entry.copyWith(syncStatus: SyncStatus.pendingCreate));
-      }
-    }
-
-    return createdModel;
+    await _guardRemoteMutation(() => _pushCreate(userId, entry));
   }
 
-  /// Offline-First task update.
-  ///
-  /// Updates local Drift SQLite record and attempts immediate API sync if connected.
-  Future<void> executeUpdateTask({
+  /// Updates a task locally, then pushes the change to the backend when connected.
+  Future<void> updateTask({
     required String userId,
     required TaskModel task,
   }) async {
     final entry = await _findEntry(task);
-    if (entry == null) return;
+    if (entry == null) {
+      throw const CacheException('That task no longer exists.', code: 'task-missing');
+    }
 
-    final isOnline = await connectivityService.checkConnection();
-
-    // 1. Update Drift SQLite locally
     await db.executeUpdateTask(
       entry.copyWith(
         title: task.title,
@@ -142,229 +129,278 @@ class TaskRepository {
         dueDate: drift.Value(task.dueDate),
         priority: task.priority.value,
         category: task.category.value,
-        updatedAt: DateTime.now(),
       ),
     );
 
-    // 2. If online and task exists on server, push update
-    if (isOnline && entry.serverId != null) {
-      try {
-        final response = await apiClient.dio.put(
-          '/tasks/${entry.serverId}',
-          queryParameters: {'user_id': userId},
-          data: task.toApiCreateJson(),
-        );
+    if (!await connectivityService.checkConnection()) return;
 
-        final rawData = response.data['data'] as Map<String, dynamic>;
-        final serverUpdatedAt =
-            DateTime.tryParse(rawData['updated_at']?.toString() ?? '') ?? DateTime.now();
+    final updated = await db.findByLocalId(entry.id);
+    if (updated == null) return;
 
-        await db.markTaskSynced(
-          localId: entry.id,
-          serverId: entry.serverId!,
-          updatedAt: serverUpdatedAt,
-        );
-      } catch (e) {
-        dev.log('Update API failed; preserved in Drift queue: $e', name: 'TaskRepo');
-      }
-    }
+    await _guardRemoteMutation(() => _pushUpdate(userId, updated));
   }
 
-  /// Offline-First task completion toggle.
-  ///
-  /// Instantly flips local completion boolean and dispatches update to server if online.
-  Future<void> executeToggleCompletion({
+  /// Flips a task's completion flag locally and mirrors it to the backend.
+  Future<void> toggleCompletion({
     required String userId,
     required TaskModel task,
   }) async {
     final entry = await _findEntry(task);
-    if (entry == null) return;
+    if (entry == null) {
+      throw const CacheException('That task no longer exists.', code: 'task-missing');
+    }
 
-    final isOnline = await connectivityService.checkConnection();
-
-    // 1. Toggle locally in Drift database
     await db.executeToggleCompletion(entry);
 
-    // 2. Push to backend if online
-    if (isOnline && entry.serverId != null) {
-      try {
-        final updatedModel = task.copyWith(isCompleted: !entry.isCompleted);
-        await apiClient.dio.put(
-          '/tasks/${entry.serverId}',
-          queryParameters: {'user_id': userId},
-          data: updatedModel.toApiCreateJson(),
-        );
+    if (!await connectivityService.checkConnection()) return;
 
-        await db.markTaskSynced(
-          localId: entry.id,
-          serverId: entry.serverId!,
-          updatedAt: DateTime.now(),
-        );
-      } catch (e) {
-        dev.log('Toggle completion API failed; queued in Drift: $e', name: 'TaskRepo');
-      }
-    }
+    final updated = await db.findByLocalId(entry.id);
+    if (updated == null) return;
+
+    await _guardRemoteMutation(() => _pushUpdate(userId, updated));
   }
 
-  /// Offline-First task deletion.
+  /// Deletes a task locally, then confirms the deletion with the backend.
   ///
-  /// Marks record as [SyncStatus.pendingDelete] in local database until remote API call completes.
-  Future<void> executeDeleteTask({
+  /// Tasks that never reached the server are removed outright; the rest are kept
+  /// as [SyncStatus.pendingDelete] tombstones until the backend confirms.
+  Future<void> deleteTask({
     required String userId,
     required TaskModel task,
   }) async {
     final entry = await _findEntry(task);
     if (entry == null) return;
 
-    final isOnline = await connectivityService.checkConnection();
-
-    // 1. Soft-delete / queue locally in Drift
     await db.executeDeleteTask(entry);
 
-    // 2. Push delete if online and registered on server
-    if (isOnline && entry.serverId != null) {
+    if (entry.serverId == null || entry.syncStatus == SyncStatus.pendingCreate) return;
+    if (!await connectivityService.checkConnection()) return;
+
+    await _guardRemoteMutation(() => _pushDelete(userId, entry));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Synchronization
+  // ---------------------------------------------------------------------------
+
+  /// Pushes every locally queued mutation for [userId] to the backend.
+  ///
+  /// Never throws: anything still failing stays queued and keeps its "pending
+  /// sync" badge in the UI, ready for the next reconnect.
+  Future<void> pushPendingChanges(String userId) async {
+    final pending = await db.getPendingSyncTasks(userId);
+
+    for (final entry in pending) {
       try {
-        await apiClient.dio.delete(
-          '/tasks/${entry.serverId}',
-          queryParameters: {'user_id': userId},
-        );
-        await db.removePermanently(entry.id);
+        switch (entry.syncStatus) {
+          case SyncStatus.pendingCreate:
+            await _pushCreate(userId, entry);
+          case SyncStatus.pendingUpdate:
+            if (entry.serverId != null) await _pushUpdate(userId, entry);
+          case SyncStatus.pendingDelete:
+            if (entry.serverId != null) await _pushDelete(userId, entry);
+        }
       } catch (e) {
-        dev.log('Delete API failed; marked as pending delete in Drift: $e', name: 'TaskRepo');
+        dev.log('Sync push failed for local task ${entry.id}: $e', name: 'SyncEngine');
       }
     }
   }
 
-  /// Bidirectional Push & Pull synchronization engine.
+  /// Pulls a single page of tasks and upserts them into the local database.
   ///
-  /// Step 1: Pushes all local uncommitted mutations (pending creations, updates, deletes) to FastAPI.
-  /// Step 2: Pulls the latest tasks from FastAPI and upserts into Drift SQLite.
-  Future<int> synchronize({
+  /// Throws a typed [AppException] when the request fails.
+  Future<TaskPageResult> pullPage({
     required String userId,
-    int skip = 0,
+    required int skip,
     int limit = AppConstants.defaultPageLimit,
   }) async {
-    final isOnline = await connectivityService.checkConnection();
-    if (!isOnline) {
-      final local = await getLocalTasks(userId);
-      return local.length;
-    }
-
-    dev.log('Starting offline-first synchronization engine...', name: 'SyncEngine');
-
-    // === STEP 1: PUSH pending local mutations ===
-    final pendingEntries = await db.getPendingSyncTasks(userId);
-    for (final entry in pendingEntries) {
-      try {
-        if (entry.syncStatus == SyncStatus.pendingCreate) {
-          final model = entry.toModel();
-          final response = await apiClient.dio.post(
-            '/tasks/',
-            queryParameters: {'user_id': userId},
-            data: model.toApiCreateJson(),
-          );
-          final rawData = response.data['data'] as Map<String, dynamic>;
-          final serverId = rawData['id'] as int;
-          final serverUpdatedAt =
-              DateTime.tryParse(rawData['updated_at']?.toString() ?? '') ?? DateTime.now();
-
-          await db.markTaskSynced(
-            localId: entry.id,
-            serverId: serverId,
-            updatedAt: serverUpdatedAt,
-          );
-        } else if (entry.syncStatus == SyncStatus.pendingUpdate && entry.serverId != null) {
-          final model = entry.toModel();
-          final response = await apiClient.dio.put(
-            '/tasks/${entry.serverId}',
-            queryParameters: {'user_id': userId},
-            data: model.toApiCreateJson(),
-          );
-          final rawData = response.data['data'] as Map<String, dynamic>;
-          final serverUpdatedAt =
-              DateTime.tryParse(rawData['updated_at']?.toString() ?? '') ?? DateTime.now();
-
-          await db.markTaskSynced(
-            localId: entry.id,
-            serverId: entry.serverId!,
-            updatedAt: serverUpdatedAt,
-          );
-        } else if (entry.syncStatus == SyncStatus.pendingDelete && entry.serverId != null) {
-          await apiClient.dio.delete(
-            '/tasks/${entry.serverId}',
-            queryParameters: {'user_id': userId},
-          );
-          await db.removePermanently(entry.id);
-        }
-      } catch (e) {
-        dev.log('Sync push error on entry ${entry.id}: $e', name: 'SyncEngine');
-      }
-    }
-
-    // === STEP 2: PULL remote tasks from FastAPI ===
-    int totalCount = 0;
     try {
-      final response = await apiClient.dio.get(
+      final response = await apiClient.dio.get<dynamic>(
         '/tasks/',
-        queryParameters: {
-          'user_id': userId,
-          'skip': skip,
-          'limit': limit,
-        },
+        queryParameters: {'user_id': userId, 'skip': skip, 'limit': limit},
       );
 
-      final data = response.data;
-      final rawList = (data['data'] as List? ?? []);
-      totalCount = (data['total'] as int?) ?? rawList.length;
-
-      for (final raw in rawList) {
-        final item = Map<String, dynamic>.from(raw as Map);
-        final serverId = item['id'] as int;
-        final title = item['title']?.toString() ?? '';
-        final description = item['description']?.toString();
-        final isCompleted = item['is_completed'] == true;
-        final dueDate =
-            item['due_date'] != null ? DateTime.tryParse(item['due_date'].toString()) : null;
-        final priority = item['priority']?.toString() ?? 'Medium';
-        final category = item['category']?.toString() ?? 'Work';
-        final createdAt = item['created_at'] != null
-            ? DateTime.tryParse(item['created_at'].toString()) ?? DateTime.now()
-            : DateTime.now();
-        final updatedAt = item['updated_at'] != null
-            ? DateTime.tryParse(item['updated_at'].toString()) ?? DateTime.now()
-            : DateTime.now();
-
-        await db.upsertServerTask(
-          serverId: serverId,
-          userId: userId,
-          title: title,
-          description: description,
-          isCompleted: isCompleted,
-          dueDate: dueDate,
-          priority: priority,
-          category: category,
-          createdAt: createdAt,
-          updatedAt: updatedAt,
+      final body = response.data;
+      if (body is! Map) {
+        throw const ServerException(
+          'Received an unexpected response from the server.',
+          code: 'malformed-payload',
         );
       }
-    } catch (e) {
-      dev.log('Sync pull error: $e', name: 'SyncEngine');
+
+      final rawList = (body['data'] as List?) ?? const [];
+      final serverIds = <int>{};
+
+      for (final raw in rawList) {
+        if (raw is! Map) continue;
+        final task = TaskModel.fromJson(Map<String, dynamic>.from(raw));
+        serverIds.add(task.id);
+
+        await db.upsertServerTask(
+          serverId: task.id,
+          userId: userId,
+          title: task.title,
+          description: task.description,
+          isCompleted: task.isCompleted,
+          dueDate: task.dueDate,
+          priority: task.priority.value,
+          category: task.category.value,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+        );
+      }
+
+      return TaskPageResult(
+        fetched: rawList.length,
+        total: (body['total'] as int?) ?? (skip + rawList.length),
+        serverIds: serverIds,
+      );
+    } on DioException catch (e) {
+      throw ApiClient.toAppException(e);
+    }
+  }
+
+  /// Performs a full refresh: pushes queued work, then re-pulls from the first page.
+  ///
+  /// Pages are pulled until at least [minimumItems] records have been refreshed
+  /// (so everything the user already scrolled past stays current) or the backend
+  /// runs out of tasks. When the complete list was retrieved, rows deleted on
+  /// another device are pruned locally.
+  ///
+  /// Throws a typed [AppException] when the pull fails.
+  Future<TaskPageResult> refreshTasks({
+    required String userId,
+    int minimumItems = AppConstants.defaultPageLimit,
+    int limit = AppConstants.defaultPageLimit,
+  }) async {
+    await pushPendingChanges(userId);
+
+    final serverIds = <int>{};
+    var loaded = 0;
+    var total = 0;
+
+    for (var page = 0; page < _maxPagesPerRefresh; page++) {
+      final result = await pullPage(userId: userId, skip: loaded, limit: limit);
+
+      serverIds.addAll(result.serverIds);
+      loaded += result.fetched;
+      total = result.total;
+
+      final reachedEnd = result.fetched < limit || loaded >= total;
+      if (reachedEnd || loaded >= minimumItems) break;
     }
 
-    final activeLocal = await getLocalTasks(userId);
-    return totalCount > 0 ? totalCount : activeLocal.length;
+    if (loaded >= total) {
+      await db.pruneSyncedTasksMissingFrom(userId, serverIds);
+    }
+
+    return TaskPageResult(fetched: loaded, total: total, serverIds: serverIds);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internals
+  // ---------------------------------------------------------------------------
+
+  /// Runs a remote mutation that has already been committed locally.
+  ///
+  /// A network failure is expected offline-first behaviour: the record simply
+  /// stays queued. A server rejection is not — it means the backend refused the
+  /// change, so it is surfaced to the caller.
+  Future<void> _guardRemoteMutation(Future<void> Function() action) async {
+    try {
+      await action();
+    } on NetworkException catch (e) {
+      dev.log('Deferred to sync queue: ${e.message}', name: 'TaskRepo');
+    }
+  }
+
+  Future<void> _pushCreate(String userId, TaskEntry entry) async {
+    try {
+      final response = await apiClient.dio.post<dynamic>(
+        '/tasks/',
+        queryParameters: {'user_id': userId},
+        data: entry.toModel().toApiCreateJson(),
+      );
+
+      final data = _dataObject(response.data);
+      await db.markTaskSynced(
+        localId: entry.id,
+        serverId: data['id'] as int,
+        updatedAt: _parseDate(data['updated_at']) ?? DateTime.now(),
+      );
+    } on DioException catch (e) {
+      throw ApiClient.toAppException(e);
+    }
+  }
+
+  Future<void> _pushUpdate(String userId, TaskEntry entry) async {
+    if (entry.serverId == null) return;
+
+    try {
+      final response = await apiClient.dio.put<dynamic>(
+        '/tasks/${entry.serverId}',
+        queryParameters: {'user_id': userId},
+        data: entry.toModel().toApiCreateJson(),
+      );
+
+      final data = _dataObject(response.data);
+      await db.markTaskSynced(
+        localId: entry.id,
+        serverId: entry.serverId!,
+        updatedAt: _parseDate(data['updated_at']) ?? DateTime.now(),
+      );
+    } on DioException catch (e) {
+      final mapped = ApiClient.toAppException(e);
+      // The task is already gone remotely, so the local copy is the stale one.
+      if (mapped is ServerException && mapped.statusCode == 404) {
+        await db.removePermanently(entry.id);
+        return;
+      }
+      throw mapped;
+    }
+  }
+
+  Future<void> _pushDelete(String userId, TaskEntry entry) async {
+    try {
+      await apiClient.dio.delete<dynamic>(
+        '/tasks/${entry.serverId}',
+        queryParameters: {'user_id': userId},
+      );
+      await db.removePermanently(entry.id);
+    } on DioException catch (e) {
+      final mapped = ApiClient.toAppException(e);
+      // Already deleted remotely: the tombstone has served its purpose.
+      if (mapped is ServerException && mapped.statusCode == 404) {
+        await db.removePermanently(entry.id);
+        return;
+      }
+      throw mapped;
+    }
+  }
+
+  /// Extracts the `data` object from the backend's `ResponseModel` envelope.
+  Map<String, dynamic> _dataObject(dynamic body) {
+    if (body is Map && body['data'] is Map) {
+      return Map<String, dynamic>.from(body['data'] as Map);
+    }
+    throw const ServerException(
+      'Received an unexpected response from the server.',
+      code: 'malformed-payload',
+    );
+  }
+
+  DateTime? _parseDate(dynamic value) {
+    if (value == null) return null;
+    return DateTime.tryParse(value.toString());
   }
 
   Future<TaskEntry?> _findEntry(TaskModel task) async {
     if (task.localId != null) {
-      final entries =
-          await (db.select(db.tasksTable)..where((tbl) => tbl.id.equals(task.localId!))).get();
-      if (entries.isNotEmpty) return entries.first;
+      final byLocalId = await db.findByLocalId(task.localId!);
+      if (byLocalId != null) return byLocalId;
     }
     if (task.id > 0) {
-      final entries =
-          await (db.select(db.tasksTable)..where((tbl) => tbl.serverId.equals(task.id))).get();
-      if (entries.isNotEmpty) return entries.first;
+      return db.findByServerId(task.id);
     }
     return null;
   }
@@ -372,13 +408,9 @@ class TaskRepository {
 
 /// Riverpod provider for [TaskRepository].
 final taskRepositoryProvider = Provider<TaskRepository>((ref) {
-  final apiClient = ref.watch(apiClientProvider);
-  final db = ref.watch(appDatabaseProvider);
-  final connectivity = ref.watch(connectivityServiceProvider);
-
   return TaskRepository(
-    apiClient: apiClient,
-    db: db,
-    connectivityService: connectivity,
+    apiClient: ref.watch(apiClientProvider),
+    db: ref.watch(appDatabaseProvider),
+    connectivityService: ref.watch(connectivityServiceProvider),
   );
 });
