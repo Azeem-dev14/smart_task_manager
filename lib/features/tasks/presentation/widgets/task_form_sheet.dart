@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:smart_task_manager/core/widgets/app_button.dart';
 import 'package:smart_task_manager/core/widgets/app_text_field.dart';
+import 'package:smart_task_manager/core/widgets/error_view.dart';
 import 'package:smart_task_manager/features/tasks/domain/models/task_model.dart';
 import 'package:smart_task_manager/features/tasks/presentation/controllers/task_list_notifier.dart';
 import 'package:smart_task_manager/features/tasks/presentation/widgets/priority_badge.dart';
@@ -111,13 +112,19 @@ class _TaskFormSheetState extends ConsumerState<TaskFormSheet> {
           dueDate: _selectedDueDate,
         );
       } else {
+        final description = _descController.text.trim();
+
         await controller.updateTaskDetails(
           widget.existingTask!.copyWith(
             title: _titleController.text.trim(),
-            description: _descController.text.trim().isEmpty ? null : _descController.text.trim(),
+            description: description.isEmpty ? null : description,
             priority: _selectedPriority,
             category: _selectedCategory,
             dueDate: _selectedDueDate,
+            // Explicit clears: `null` alone means "leave unchanged", which would
+            // make removing a due date or description impossible.
+            clearDescription: description.isEmpty,
+            clearDueDate: _selectedDueDate == null,
           ),
         );
       }
@@ -126,11 +133,7 @@ class _TaskFormSheetState extends ConsumerState<TaskFormSheet> {
         Navigator.pop(context);
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving task: $e')),
-        );
-      }
+      if (mounted) ErrorView.showSnackBar(context, e);
     } finally {
       if (mounted) {
         setState(() => _isSubmitting = false);
