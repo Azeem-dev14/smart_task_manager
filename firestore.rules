@@ -9,12 +9,19 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;
 
+      // ProfileRepository.updateThemeMode() can be the first write for an
+      // account (a merge-set of just `themeMode`), which Firestore evaluates
+      // against this create rule too. Guard the type checks with `in` so a
+      // missing field short-circuits instead of throwing and denying the
+      // write outright.
       allow create: if request.auth != null
                     && request.auth.uid == userId
                     && request.resource.data.keys().hasOnly(
                          ['name', 'email', 'createdAt', 'themeMode'])
-                    && request.resource.data.name is string
-                    && request.resource.data.email is string;
+                    && (!('name' in request.resource.data)
+                        || request.resource.data.name is string)
+                    && (!('email' in request.resource.data)
+                        || request.resource.data.email is string);
 
       allow update: if request.auth != null
                     && request.auth.uid == userId
