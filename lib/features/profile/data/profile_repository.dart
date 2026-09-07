@@ -36,7 +36,7 @@ class ProfileRepository {
   Future<UserModel> fetchUserProfile(String userId, {UserModel? fallback}) async {
     if (isFirebaseAvailable) {
       try {
-        final doc = await _users.doc(userId).get();
+        final doc = await _users.doc(userId).get().timeout(AppConstants.firebaseTimeout);
         final data = doc.data();
 
         if (doc.exists && data != null) {
@@ -76,7 +76,7 @@ class ProfileRepository {
         'email': user.email,
         'createdAt': Timestamp.fromDate(user.createdAt),
         'themeMode': user.themeMode,
-      }, SetOptions(merge: true));
+      }, SetOptions(merge: true)).timeout(AppConstants.firebaseTimeout);
     } catch (e) {
       // The profile stays cached locally and is re-synced on the next write.
       dev.log('Firestore profile save failed: $e', name: 'ProfileRepo');
@@ -96,7 +96,10 @@ class ProfileRepository {
     if (!isFirebaseAvailable || userId.isEmpty) return;
 
     try {
-      await _users.doc(userId).set({'themeMode': themeMode}, SetOptions(merge: true));
+      await _users
+          .doc(userId)
+          .set({'themeMode': themeMode}, SetOptions(merge: true))
+          .timeout(AppConstants.firebaseTimeout);
     } catch (e) {
       dev.log('Firestore theme sync failed: $e', name: 'ProfileRepo');
     }

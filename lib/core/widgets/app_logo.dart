@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:smart_task_manager/core/theme/text_styles.dart';
 
 /// A reusable application branding widget displaying the app icon, title, and optional subtitle.
 class AppLogo extends StatelessWidget {
@@ -37,7 +38,7 @@ class AppLogo extends StatelessWidget {
           Text(
             'Smart Task Manager',
             textAlign: TextAlign.center,
-            style: theme.textTheme.headlineSmall?.copyWith(
+            style: context.headlineSmall?.copyWith(
               fontWeight: FontWeight.bold,
             ),
           ),
@@ -47,7 +48,7 @@ class AppLogo extends StatelessWidget {
           Text(
             subtitle!,
             textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(
+            style: context.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
             ),
           ),

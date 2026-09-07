@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:smart_task_manager/core/theme/text_styles.dart';
 import 'package:smart_task_manager/core/widgets/app_button.dart';
 import 'package:smart_task_manager/core/widgets/app_text_field.dart';
 import 'package:smart_task_manager/core/widgets/error_view.dart';
@@ -88,14 +89,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 children: [
                   Text(
                     'Create Account',
-                    style: theme.textTheme.headlineMedium?.copyWith(
+                    style: context.headlineMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 6),
                   Text(
                     'Sign up to sync your tasks across devices',
-                    style: theme.textTheme.bodyMedium?.copyWith(
+                    style: context.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
                   ),

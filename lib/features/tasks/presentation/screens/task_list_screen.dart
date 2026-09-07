@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:smart_task_manager/core/theme/text_styles.dart';
 import 'package:smart_task_manager/core/widgets/empty_state_view.dart';
 import 'package:smart_task_manager/core/widgets/error_view.dart';
 import 'package:smart_task_manager/core/widgets/offline_banner.dart';
 import 'package:smart_task_manager/features/auth/data/auth_repository.dart';
-import 'package:smart_task_manager/features/profile/presentation/controllers/theme_controller.dart';
 import 'package:smart_task_manager/features/profile/presentation/screens/profile_screen.dart';
 import 'package:smart_task_manager/features/tasks/domain/models/task_filter.dart';
 import 'package:smart_task_manager/features/tasks/domain/models/task_model.dart';
@@ -12,7 +12,8 @@ import 'package:smart_task_manager/features/tasks/domain/models/task_sort_by.dar
 import 'package:smart_task_manager/features/tasks/presentation/controllers/task_list_notifier.dart';
 import 'package:smart_task_manager/features/tasks/presentation/states/task_list_state.dart';
 import 'package:smart_task_manager/features/tasks/presentation/widgets/task_card.dart';
-import 'package:smart_task_manager/features/tasks/presentation/widgets/task_form_sheet.dart';
+import 'package:smart_task_manager/features/tasks/presentation/screens/task_form_screen.dart';
+import 'package:smart_task_manager/features/tasks/presentation/screens/task_search_delegate.dart';
 
 /// Primary dashboard screen displaying the task list with debounced search,
 /// status filtering, sorting, pull-to-refresh, and infinite scroll pagination.
@@ -26,7 +27,6 @@ class TaskListScreen extends ConsumerStatefulWidget {
 
 class _TaskListScreenState extends ConsumerState<TaskListScreen> {
   final _scrollController = ScrollController();
-  final _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -38,7 +38,6 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
-    _searchController.dispose();
     super.dispose();
   }
 
@@ -56,7 +55,6 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(taskListControllerProvider);
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
     final user = ref.watch(currentUserProvider);
     final visibleTasks = state.visibleTasks;
 
@@ -78,26 +76,20 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
           children: [
             const Text(
               'Smart Task Manager',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              style: TextStyle(fontWeight: FontWeight.bold),
             ),
             if (user != null && user.name.isNotEmpty)
               Text(
                 'Hello, ${user.name}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
+                style: context.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                 ),
               ),
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: isDark ? 'Switch to light mode' : 'Switch to dark mode',
-            icon: Icon(isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined),
-            onPressed: () => ref.read(themeControllerProvider.notifier).toggleTheme(),
-          ),
           IconButton(
             tooltip: 'My profile',
             icon: const Icon(Icons.account_circle_outlined),
@@ -113,72 +105,61 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
         children: [
           const OfflineBanner(),
 
-          // Search field and sort menu.
+          // Search bar — tapping opens the dedicated search page (SearchDelegate).
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: ValueListenableBuilder<TextEditingValue>(
-                    valueListenable: _searchController,
-                    builder: (context, value, _) {
-                      return TextField(
-                        controller: _searchController,
-                        textInputAction: TextInputAction.search,
-                        onChanged: ref.read(taskListControllerProvider.notifier).setSearchQuery,
-                        decoration: InputDecoration(
-                          hintText: 'Search tasks by title...',
-                          prefixIcon: const Icon(Icons.search, size: 20),
-                          suffixIcon: value.text.isEmpty
-                              ? null
-                              : IconButton(
-                                  tooltip: 'Clear search',
-                                  icon: const Icon(Icons.clear, size: 18),
-                                  onPressed: () {
-                                    _searchController.clear();
-                                    ref
-                                        .read(taskListControllerProvider.notifier)
-                                        .setSearchQuery('');
-                                  },
-                                ),
-                          contentPadding:
-                              const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Material(
+              color: theme.inputDecorationTheme.fillColor,
+              borderRadius: BorderRadius.circular(24),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(24),
+                onTap: () => showSearch(context: context, delegate: TaskSearchDelegate()),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.search,
+                        size: 20,
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Search tasks by title...',
+                        style: context.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                         ),
-                      );
-                    },
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                PopupMenuButton<TaskSortBy>(
-                  icon: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: theme.colorScheme.outlineVariant),
-                    ),
-                    child: const Icon(Icons.sort_rounded, size: 20),
-                  ),
-                  tooltip: 'Sort tasks',
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  onSelected: ref.read(taskListControllerProvider.notifier).setSortBy,
-                  itemBuilder: (_) => [
-                    _sortMenuItem(TaskSortBy.createdDate, 'Sort by created date', state.sortBy),
-                    _sortMenuItem(TaskSortBy.dueDate, 'Sort by due date', state.sortBy),
-                    _sortMenuItem(TaskSortBy.priority, 'Sort by priority', state.sortBy),
-                  ],
-                ),
-              ],
+              ),
             ),
           ),
 
-          // Status filter chips.
+          // Sort menu and status filter chips.
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
+                  PopupMenuButton<TaskSortBy>(
+                    tooltip: 'Sort tasks',
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    onSelected: ref.read(taskListControllerProvider.notifier).setSortBy,
+                    itemBuilder: (_) => [
+                      _sortMenuItem(TaskSortBy.createdDate, 'Sort by created date', state.sortBy),
+                      _sortMenuItem(TaskSortBy.dueDate, 'Sort by due date', state.sortBy),
+                      _sortMenuItem(TaskSortBy.priority, 'Sort by priority', state.sortBy),
+                    ],
+                    child: Chip(
+                      avatar: const Icon(Icons.sort_rounded, size: 18),
+                      label: const Text('Sort'),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   _filterChip('All', TaskFilter.all, state.filter),
                   const SizedBox(width: 8),
                   _filterChip('Pending', TaskFilter.pending, state.filter),
@@ -191,11 +172,26 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
 
           const Divider(height: 12),
 
+          // Task count for the currently visible (filtered/searched) list.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Tasks - ${visibleTasks.length}',
+                style: context.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                ),
+              ),
+            ),
+          ),
+
           Expanded(child: _buildBody(state, visibleTasks)),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => TaskFormSheet.show(context),
+        onPressed: () => TaskFormScreen.show(context),
         icon: const Icon(Icons.add),
         label: const Text('New Task'),
       ),
@@ -263,12 +259,10 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
       );
     }
 
-    return EmptyStateView(
+    return const EmptyStateView(
       icon: Icons.task_alt_outlined,
       title: 'No tasks yet',
       description: 'Stay organized by adding your first task.',
-      actionLabel: 'Create a Task',
-      onAction: () => TaskFormSheet.show(context),
     );
   }
 
@@ -295,6 +289,7 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
     return FilterChip(
       label: Text(label),
       selected: current == filter,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       onSelected: (_) => ref.read(taskListControllerProvider.notifier).setFilter(filter),
     );
   }

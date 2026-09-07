@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:smart_task_manager/core/theme/text_styles.dart';
 import 'package:smart_task_manager/core/errors/app_exceptions.dart';
 
 /// Reusable full-page error view with categorized icons, user-friendly messages, and retry actions.
@@ -63,13 +64,13 @@ class ErrorView extends StatelessWidget {
             Text(
               title,
               textAlign: TextAlign.center,
-              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              style: context.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
+              style: context.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
               ),
             ),

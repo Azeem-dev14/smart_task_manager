@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:smart_task_manager/core/theme/text_styles.dart';
 
 /// Reusable presentation component displayed when task lists or search queries have no items.
 class EmptyStateView extends StatelessWidget {
@@ -53,7 +54,7 @@ class EmptyStateView extends StatelessWidget {
             Text(
               title,
               textAlign: TextAlign.center,
-              style: theme.textTheme.titleLarge?.copyWith(
+              style: context.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -61,7 +62,7 @@ class EmptyStateView extends StatelessWidget {
             Text(
               description,
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
+              style: context.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
               ),
             ),

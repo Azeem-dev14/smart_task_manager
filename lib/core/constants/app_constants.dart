@@ -11,6 +11,14 @@ class AppConstants {
   /// Response receive timeout in milliseconds for HTTP network requests.
   static const int apiReceiveTimeoutMs = 15000;
 
+  /// Timeout for Firebase Auth and Firestore calls.
+  ///
+  /// Unlike [apiConnectTimeoutMs]'s Dio client, the Firebase SDKs enforce no
+  /// timeout of their own — a call made with no route to the server can hang
+  /// indefinitely instead of failing, which otherwise leaves a submit button
+  /// spinning forever. Every Firebase call in the app is wrapped with this.
+  static const Duration firebaseTimeout = Duration(seconds: 15);
+
   /// Default page size for paginated task queries (`skip` & `limit`).
   static const int defaultPageLimit = 10;
 

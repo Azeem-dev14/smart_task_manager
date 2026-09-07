@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:smart_task_manager/core/theme/text_styles.dart';
 import 'package:smart_task_manager/core/widgets/app_confirm_dialog.dart';
 import 'package:smart_task_manager/core/widgets/error_view.dart';
 import 'package:smart_task_manager/features/auth/data/auth_repository.dart';
@@ -131,12 +132,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   const SizedBox(height: 12),
                   Text(
                     user?.name ?? 'User',
-                    style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+                    style: context.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     user?.email ?? '',
-                    style: theme.textTheme.bodyMedium?.copyWith(
+                    style: context.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
                   ),
@@ -144,7 +145,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     const SizedBox(height: 6),
                     Text(
                       'Member since ${DateFormat.yMMMd().format(user.createdAt)}',
-                      style: theme.textTheme.bodySmall?.copyWith(
+                      style: context.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                       ),
                     ),
@@ -166,7 +167,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       children: [
                         Text(
                           'Personal Details',
-                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                          style: context.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                         ),
                         IconButton(
                           icon: Icon(_isEditingName ? Icons.close : Icons.edit_outlined, size: 20),
@@ -217,17 +218,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         title: const Text('Email'),
                         subtitle: Text(user?.email ?? 'Not set'),
                       ),
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.fingerprint_rounded),
-                        title: const Text('User ID (API query param)'),
-                        subtitle: Text(
-                          user?.uid ?? '',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                        ),
-                      ),
                     ],
                   ],
                 ),
@@ -244,12 +234,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   children: [
                     Text(
                       'Appearance',
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                      style: context.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Preferences are automatically synced to Firestore.',
-                      style: theme.textTheme.bodySmall?.copyWith(
+                      style: context.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                       ),
                     ),

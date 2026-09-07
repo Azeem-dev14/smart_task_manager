@@ -130,17 +130,16 @@ class AuthRepository {
     if (!isFirebaseAvailable) return _registerLocally(name: name, email: email);
 
     try {
-      final credential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: email.trim(),
-        password: password,
-      );
+      final credential = await FirebaseAuth.instance
+          .createUserWithEmailAndPassword(email: email.trim(), password: password)
+          .timeout(AppConstants.firebaseTimeout);
 
       final user = credential.user;
       if (user == null) {
         throw const AuthException('Registration failed. User was not created.');
       }
 
-      await user.updateDisplayName(name.trim());
+      await user.updateDisplayName(name.trim()).timeout(AppConstants.firebaseTimeout);
 
       final userModel = UserModel(
         uid: user.uid,
@@ -153,6 +152,11 @@ class AuthRepository {
       return userModel;
     } on FirebaseAuthException catch (e) {
       throw AuthException.fromFirebaseCode(e.code, e.message);
+    } on TimeoutException {
+      // The Firebase SDKs enforce no timeout of their own, so without this a
+      // device with no route to Firebase would leave the caller awaiting
+      // forever instead of failing — the register button stuck spinning.
+      throw AuthException.fromFirebaseCode('network-request-failed');
     } catch (e) {
       if (e is AppException) rethrow;
       throw AuthException('Could not complete registration.', originalError: e);
@@ -167,10 +171,9 @@ class AuthRepository {
     if (!isFirebaseAvailable) return _loginLocally(email: email);
 
     try {
-      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: email.trim(),
-        password: password,
-      );
+      final credential = await FirebaseAuth.instance
+          .signInWithEmailAndPassword(email: email.trim(), password: password)
+          .timeout(AppConstants.firebaseTimeout);
 
       final user = credential.user;
       if (user == null) {
@@ -188,6 +191,8 @@ class AuthRepository {
       return userModel;
     } on FirebaseAuthException catch (e) {
       throw AuthException.fromFirebaseCode(e.code, e.message);
+    } on TimeoutException {
+      throw AuthException.fromFirebaseCode('network-request-failed');
     } catch (e) {
       if (e is AppException) rethrow;
       throw AuthException('Could not sign you in.', originalError: e);
@@ -198,9 +203,11 @@ class AuthRepository {
   Future<void> logout() async {
     if (isFirebaseAvailable) {
       try {
-        await FirebaseAuth.instance.signOut();
+        await FirebaseAuth.instance.signOut().timeout(AppConstants.firebaseTimeout);
       } on FirebaseAuthException catch (e) {
         throw AuthException.fromFirebaseCode(e.code, e.message);
+      } on TimeoutException {
+        throw AuthException.fromFirebaseCode('network-request-failed');
       }
     }
     await _clearSession();

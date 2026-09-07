@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 /// Design system theme configurations for Light and Dark Material 3 modes.
 class AppTheme {
@@ -24,10 +25,16 @@ class AppTheme {
       surface: const Color(0xFFF8FAFC),
     );
 
+    final textTheme = GoogleFonts.poppinsTextTheme().apply(
+      bodyColor: colorScheme.onSurface,
+      displayColor: colorScheme.onSurface,
+    );
+
     return ThemeData(
       useMaterial3: true,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: const Color(0xFFF1F5F9),
+      textTheme: textTheme,
       appBarTheme: const AppBarTheme(
         centerTitle: false,
         elevation: 0,
@@ -46,6 +53,16 @@ class AppTheme {
         filled: true,
         fillColor: Colors.white,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        // Every text field's placeholder — and its resting (unfocused,
+        // unfloated) label, which Material shows large by default — renders
+        // at the same size as ordinary body text (bodyMedium) instead of the
+        // larger default, which otherwise made fields look inconsistent.
+        hintStyle: textTheme.bodyMedium?.copyWith(
+          color: colorScheme.onSurface.withValues(alpha: 0.5),
+        ),
+        labelStyle: textTheme.bodyMedium?.copyWith(
+          color: colorScheme.onSurface.withValues(alpha: 0.6),
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
@@ -70,7 +87,7 @@ class AppTheme {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           backgroundColor: primarySeed,
           foregroundColor: Colors.white,
-          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+          textStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
         ),
       ),
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
@@ -92,10 +109,16 @@ class AppTheme {
       surface: const Color(0xFF0F172A),
     );
 
+    final textTheme = GoogleFonts.poppinsTextTheme(ThemeData.dark().textTheme).apply(
+      bodyColor: colorScheme.onSurface,
+      displayColor: colorScheme.onSurface,
+    );
+
     return ThemeData(
       useMaterial3: true,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: const Color(0xFF0B0F19),
+      textTheme: textTheme,
       appBarTheme: const AppBarTheme(
         centerTitle: false,
         elevation: 0,
@@ -114,6 +137,12 @@ class AppTheme {
         filled: true,
         fillColor: const Color(0xFF131C2E),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        hintStyle: textTheme.bodyMedium?.copyWith(
+          color: colorScheme.onSurface.withValues(alpha: 0.5),
+        ),
+        labelStyle: textTheme.bodyMedium?.copyWith(
+          color: colorScheme.onSurface.withValues(alpha: 0.6),
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: Color(0xFF334155)),
@@ -138,7 +167,7 @@ class AppTheme {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           backgroundColor: const Color(0xFF3B82F6),
           foregroundColor: Colors.white,
-          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+          textStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
         ),
       ),
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
