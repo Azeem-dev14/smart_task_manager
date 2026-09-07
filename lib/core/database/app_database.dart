@@ -65,6 +65,12 @@ class AppDatabase extends _$AppDatabase {
   /// Constructs the database using a background lazy connection.
   AppDatabase() : super(_openConnection());
 
+  /// Constructs a database on top of an explicit [executor].
+  ///
+  /// Used by tests to run the same schema and queries against an in-memory
+  /// SQLite instance.
+  AppDatabase.withExecutor(super.executor);
+
   @override
   int get schemaVersion => 1;
 
@@ -233,6 +239,37 @@ class AppDatabase extends _$AppDatabase {
   /// Permanently removes a task row from SQLite after successful remote deletion.
   Future<void> removePermanently(int localId) async {
     await (delete(tasksTable)..where((tbl) => tbl.id.equals(localId))).go();
+  }
+
+  /// Looks up a single task by its local primary key.
+  Future<TaskEntry?> findByLocalId(int localId) {
+    return (select(tasksTable)..where((tbl) => tbl.id.equals(localId))).getSingleOrNull();
+  }
+
+  /// Looks up a single task by the identifier assigned by the backend.
+  Future<TaskEntry?> findByServerId(int serverId) {
+    return (select(tasksTable)..where((tbl) => tbl.serverId.equals(serverId))).getSingleOrNull();
+  }
+
+  /// Drops synced rows for [userId] whose [serverIds] no longer exist remotely.
+  ///
+  /// Only call this after pulling the user's complete task list, otherwise rows
+  /// belonging to pages that were simply not fetched would be discarded.
+  /// Records with local changes still awaiting sync are always preserved.
+  Future<int> pruneSyncedTasksMissingFrom(String userId, Set<int> serverIds) {
+    final statement = delete(tasksTable)
+      ..where((tbl) =>
+          tbl.userId.equals(userId) &
+          tbl.syncStatus.equals(SyncStatus.synced) &
+          tbl.serverId.isNotNull());
+
+    // An empty id set means the server holds no tasks at all, in which case
+    // every synced row is stale and the extra predicate would be invalid SQL.
+    if (serverIds.isNotEmpty) {
+      statement.where((tbl) => tbl.serverId.isNotIn(serverIds.toList()));
+    }
+
+    return statement.go();
   }
 }
 
