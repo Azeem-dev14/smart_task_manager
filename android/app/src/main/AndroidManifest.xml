@@ -1,6 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required in all build modes: the release APK talks to Firebase Auth,
+         Cloud Firestore and the Smart Task Manager REST API. The Flutter
+         template only declares this in the debug/profile manifests. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Required by connectivity_plus to observe network state transitions. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
     <application
-        android:label="smart_task_manager"
+        android:label="Smart Task Manager"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
