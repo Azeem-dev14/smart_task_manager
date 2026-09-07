@@ -47,6 +47,11 @@ class TaskModel {
   });
 
   /// Creates a copy of this [TaskModel] with specified fields replaced.
+  ///
+  /// Because `null` means "leave unchanged", the nullable [description] and
+  /// [dueDate] fields are cleared with the explicit [clearDescription] and
+  /// [clearDueDate] flags — otherwise removing a task's due date would be
+  /// indistinguishable from not touching it.
   TaskModel copyWith({
     int? id,
     int? localId,
@@ -62,15 +67,17 @@ class TaskModel {
     bool? isPendingSync,
     String? syncStatus,
     DateTime? lastSyncedAt,
+    bool clearDescription = false,
+    bool clearDueDate = false,
   }) {
     return TaskModel(
       id: id ?? this.id,
       localId: localId ?? this.localId,
       userId: userId ?? this.userId,
       title: title ?? this.title,
-      description: description ?? this.description,
+      description: clearDescription ? null : (description ?? this.description),
       isCompleted: isCompleted ?? this.isCompleted,
-      dueDate: dueDate ?? this.dueDate,
+      dueDate: clearDueDate ? null : (dueDate ?? this.dueDate),
       priority: priority ?? this.priority,
       category: category ?? this.category,
       createdAt: createdAt ?? this.createdAt,
