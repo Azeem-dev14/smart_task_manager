@@ -1,0 +1,33 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Profiles live at users/{userId} and hold name, email, createdAt and
+    // themeMode. A signed-in user may only ever read or write their own
+    // document, and may never hand it to a different account.
+    match /users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      allow create: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.data.keys().hasOnly(
+                         ['name', 'email', 'createdAt', 'themeMode'])
+                    && request.resource.data.name is string
+                    && request.resource.data.email is string;
+
+      allow update: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.data.keys().hasOnly(
+                         ['name', 'email', 'createdAt', 'themeMode']);
+
+      // Profiles are retained with the account rather than deleted by the client.
+      allow delete: if false;
+    }
+
+    // Anything not matched above is closed by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
