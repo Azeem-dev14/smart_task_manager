@@ -15,9 +15,16 @@ class HiveService {
   Box get settingsBox => _settingsBox;
 
   /// Initializes Hive for Flutter and opens the settings box.
-  Future<void> init() async {
+  ///
+  /// [useFlutterInit] resolves the storage directory via a platform channel
+  /// (`path_provider`), which only works with a real Flutter binding. Tests
+  /// call [Hive.init] against a temp directory themselves beforehand and pass
+  /// `false` here to just open the box on top of that.
+  Future<void> init({bool useFlutterInit = true}) async {
     try {
-      await Hive.initFlutter();
+      if (useFlutterInit) {
+        await Hive.initFlutter();
+      }
       _settingsBox = await Hive.openBox(AppConstants.settingsBoxName);
     } catch (e) {
       throw CacheException(
