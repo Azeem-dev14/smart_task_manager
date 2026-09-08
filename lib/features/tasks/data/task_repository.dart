@@ -350,13 +350,7 @@ class TaskRepository {
         updatedAt: _parseDate(data['updated_at']) ?? DateTime.now(),
       );
     } on DioException catch (e) {
-      final mapped = ApiClient.toAppException(e);
-      // The task is already gone remotely, so the local copy is the stale one.
-      if (mapped is ServerException && mapped.statusCode == 404) {
-        await db.removePermanently(entry.id);
-        return;
-      }
-      throw mapped;
+      await _reconcileMissingOrRethrow(e, entry.id);
     }
   }
 
@@ -368,14 +362,20 @@ class TaskRepository {
       );
       await db.removePermanently(entry.id);
     } on DioException catch (e) {
-      final mapped = ApiClient.toAppException(e);
-      // Already deleted remotely: the tombstone has served its purpose.
-      if (mapped is ServerException && mapped.statusCode == 404) {
-        await db.removePermanently(entry.id);
-        return;
-      }
-      throw mapped;
+      await _reconcileMissingOrRethrow(e, entry.id);
     }
+  }
+
+  /// Maps a failed push to an [AppException], unless the backend reports 404
+  /// — the task is already gone remotely, so the local copy (or tombstone)
+  /// is the stale one and is simply removed instead of surfacing an error.
+  Future<void> _reconcileMissingOrRethrow(DioException e, int localId) async {
+    final mapped = ApiClient.toAppException(e);
+    if (mapped is ServerException && mapped.statusCode == 404) {
+      await db.removePermanently(localId);
+      return;
+    }
+    throw mapped;
   }
 
   /// Extracts the `data` object from the backend's `ResponseModel` envelope.
